@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 typedef struct {
     int x;
@@ -25,7 +26,9 @@ Treasure createTreasure() {
     printf("Introdu username-ul:\n");
     scanf("%s", treasure.username);
     printf("Introdu coordonatele:\n");
+    printf("x coordonata:\n");
     scanf("%d", &treasure.coordonate.x);
+    printf("y coordonata:\n");
     scanf("%d", &treasure.coordonate.y);
     printf("Introdu indiciul:\n");
     scanf("%s", treasure.clue);
@@ -35,20 +38,41 @@ Treasure createTreasure() {
 }
 
 void showTreasure(Treasure *tr) {
-    printf("id: %d\nusername: %s\nx coordonate: %d\ny coordonate: %d\nclue: %s\nvalue: %d\n", tr->id, tr->username, tr->coordonate.x,tr->coordonate.y,tr->clue,tr->value);
+    printf("id: %d\nusername: %s\nx coordonate: %d\ny coordonate: %d\nclue: %s\nvalue: %d\n\n", tr->id, tr->username, tr->coordonate.x,tr->coordonate.y,tr->clue,tr->value);
 }
 
 void add(char *hunt) {
     DIR *dir = opendir(hunt);
     char newDirPath[100];
+    char originalLoggingFile[150];
+    char targetLoggingFile[150];
+    char absoluteTargetPath[255];
+    sprintf(originalLoggingFile, "logging-file-%s.txt", hunt);
     int new = 0;
     if(!dir) {
         new = 1;
         sprintf(newDirPath,"./%s",hunt);
+        sprintf(targetLoggingFile, "%s/logging-file.txt", newDirPath);
         if(mkdir(newDirPath, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH) < 0) {
             perror("eroarea la crearea noului hunt");
             return;
         }
+    }
+    char cwd[256];
+    if (getcwd(cwd, sizeof(cwd)) == NULL) {
+        perror("eroare la obtinerea directorului curent");
+        return;
+    }
+    sprintf(absoluteTargetPath, "%s/%s", cwd, targetLoggingFile);
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "wt");
+    if(!targetLoggingFilePtr) {
+        perror("eroare la deschiderea fisierului de logare");
+        return;
+    }
+    if(symlink(targetLoggingFile, originalLoggingFile) < 0) {
+        perror("eroare la crearea legaturii simbolice");
+        fclose(targetLoggingFilePtr);
+        return;
     }
     if(new) {
         dir = opendir(newDirPath);
@@ -73,6 +97,7 @@ void add(char *hunt) {
         perror("eroare la scrierea in fisierul treasures");
         return;
     }
+    fprintf(targetLoggingFilePtr, "Adaugata comoara cu id-ul %d\n", tr.id);
     if(fclose(f)) {
         perror("eroare la inchiderea fisierului treasures");
         return;
@@ -81,12 +106,23 @@ void add(char *hunt) {
         perror("eroare la inchiderea directorului");
         return;
     }
+    if(fclose(targetLoggingFilePtr)) {
+        perror("eroare la inchiderea fisierului de logare");
+        return;
+    }
     putchar('\n');
 }
 
 void list(char *hunt) {
+    char targetLoggingFile[150];
     char filepath[150];
     sprintf(filepath, "%s/treasures", hunt);
+    sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    if(!targetLoggingFilePtr) {
+        perror("eroare la deschiderea fisierului de logare");
+        return;
+    }
     FILE *f = fopen(filepath, "rb");
     if(!f) {
         perror("acest hunt nu exista");
@@ -97,6 +133,7 @@ void list(char *hunt) {
     while(fread(&tr, sizeof(Treasure), 1, f)) {
         showTreasure(&tr);
     }
+    fprintf(targetLoggingFilePtr, "Lista comorilor de la huntul %s:\n", hunt);
     if(fclose(f)) {
         perror("eroare la inchiderea fisierului treasures");
         return;
@@ -107,6 +144,13 @@ void list(char *hunt) {
 void view(char *hunt, int id) {
     char filepath[150];
     sprintf(filepath, "%s/treasures", hunt);
+    char targetLoggingFile[150];
+    sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    if(!targetLoggingFilePtr) {
+        perror("eroare la deschiderea fisierului de logare");
+        return;
+    }
     FILE *f = fopen(filepath, "rb");
     if(!f) {
         perror("acest hunt nu exista");
@@ -121,11 +165,20 @@ void view(char *hunt, int id) {
             break;
         }
     }
+    if(found) {
+        fprintf(targetLoggingFilePtr, "Comoara cu id-ul %d a fost vizualizata\n", id);
+    } else {
+        fprintf(targetLoggingFilePtr, "Comoara cu id-ul %d nu exista\n", id);
+    }
     if(!found) {
         printf("Comoara cu id ul %d nu exista\n", id);
     }
     if(fclose(f)) {
         perror("eroare la inchiderea fisierului treasures");
+        return;
+    }
+    if(fclose(targetLoggingFilePtr)) {
+        perror("eroare la inchiderea fisierului de logare");
         return;
     }
     putchar('\n');
@@ -134,8 +187,19 @@ void view(char *hunt, int id) {
 void remove_hunt(char *hunt) {
     char filepath[150];
     sprintf(filepath, "%s/treasures", hunt);
+    char targetLoggingFile[150];
+    sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
+    char originalLoggingFile[150];
+    sprintf(originalLoggingFile, "logging-file-%s.txt", hunt);
+    if(unlink(originalLoggingFile) < 0) {
+        perror("eroare la stergerea legaturii simbolice");
+    }
     if(remove(filepath) < 0) {
         perror("eroare la stergerea fisierului treasures");
+        return;
+    }
+    if(remove(targetLoggingFile) < 0) {
+        perror("eroare la stergerea fisierului de logare");
         return;
     }
     if(rmdir(hunt) < 0) {
@@ -146,6 +210,13 @@ void remove_hunt(char *hunt) {
 }
 
 void remove_treasure(char *hunt, int id) {
+    char targetLoggingFile[150];
+    sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    if(!targetLoggingFilePtr) {
+        perror("eroare la deschiderea fisierului de logare");
+        return;
+    }
     char filepath[150];
     sprintf(filepath, "%s/treasures", hunt);
     FILE *f = fopen(filepath, "rb+");
@@ -184,9 +255,11 @@ void remove_treasure(char *hunt, int id) {
             perror("eroare la inchiderea fisierului temporar");
             return;
         }
+        fprintf(targetLoggingFilePtr, "Comoara cu id-ul %d nu exista\n", id);
         remove("temp");
         return;
     }
+    fprintf(targetLoggingFilePtr, "Comoara cu id-ul %d a fost stearsa\n", id);
     if(fclose(f)) {
         perror("eroare la inchiderea fisierului treasures");
         fclose(temp);
@@ -194,6 +267,10 @@ void remove_treasure(char *hunt, int id) {
     }
     if(fclose(temp)) {
         perror("eroare la inchiderea fisierului temporar");
+        return;
+    }
+    if(fclose(targetLoggingFilePtr)) {
+        perror("eroare la inchiderea fisierului de logare");
         return;
     }
     if(remove(filepath) < 0) {
@@ -208,9 +285,43 @@ void remove_treasure(char *hunt, int id) {
 }
 
 int main(int argc,char **argv) {
-//add("hunt2");
-remove_treasure("hunt2", 2);
-list("hunt2");
-//remove_hunt("hunt2");
-return 0;
+    if(argc < 2) {
+        printf("Utilizare: %s <comanda> [<parametru>]\n", argv[0]);
+        return 1;
+    }
+    if(!strcmp(argv[1], "add")) {
+        if(argc < 3) {
+            printf("Utilizare: %s add <hunt>\n", argv[0]);
+            return 1;
+        }
+        add(argv[2]);
+    } else if(!strcmp(argv[1], "list")) {
+        if(argc < 3) {
+            printf("Utilizare: %s list <hunt>\n", argv[0]);
+            return 1;
+        }
+        list(argv[2]);
+    } else if(!strcmp(argv[1], "view")) {
+        if(argc < 4) {
+            printf("Utilizare: %s view <hunt> <id>\n", argv[0]);
+            return 1;
+        }
+        view(argv[2], atoi(argv[3]));
+    } else if(!strcmp(argv[1], "remove_hunt")) {
+        if(argc < 3) {
+            printf("Utilizare: %s remove_hunt <hunt>\n", argv[0]);
+            return 1;
+        }
+        remove_hunt(argv[2]);
+    } else if(!strcmp(argv[1], "remove_treasure")) {
+        if(argc < 4) {
+            printf("Utilizare: %s remove_treasure <hunt> <id>\n", argv[0]);
+            return 1;
+        }
+        remove_treasure(argv[2], atoi(argv[3]));
+    } else {
+        printf("Comanda necunoscuta: %s\n", argv[1]);
+        return 1;
+    }
+    return 0;
 }
