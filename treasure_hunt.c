@@ -46,7 +46,7 @@ void add(char *hunt) {
     char newDirPath[100];
     char originalLoggingFile[150];
     char targetLoggingFile[150];
-    char absoluteTargetPath[255];
+    char absoluteTargetPath[406];
     sprintf(originalLoggingFile, "logging-file-%s.txt", hunt);
     int new = 0;
     if(!dir) {
@@ -58,26 +58,27 @@ void add(char *hunt) {
             return;
         }
     }
+    sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
     char cwd[256];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         perror("eroare la obtinerea directorului curent");
         return;
     }
     sprintf(absoluteTargetPath, "%s/%s", cwd, targetLoggingFile);
-    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "wt");
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "at");
     if(!targetLoggingFilePtr) {
         perror("eroare la deschiderea fisierului de logare");
-        return;
-    }
-    if(symlink(targetLoggingFile, originalLoggingFile) < 0) {
-        perror("eroare la crearea legaturii simbolice");
-        fclose(targetLoggingFilePtr);
         return;
     }
     if(new) {
         dir = opendir(newDirPath);
         if(!dir) {
             perror("eroare la deschiderea directorului nou creat");
+            return;
+        }
+        if(symlink(targetLoggingFile, originalLoggingFile) < 0) {
+            perror("eroare la crearea legaturii simbolice");
+            fclose(targetLoggingFilePtr);
             return;
         }
     }
@@ -118,7 +119,7 @@ void list(char *hunt) {
     char filepath[150];
     sprintf(filepath, "%s/treasures", hunt);
     sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
-    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "at");
     if(!targetLoggingFilePtr) {
         perror("eroare la deschiderea fisierului de logare");
         return;
@@ -133,7 +134,7 @@ void list(char *hunt) {
     while(fread(&tr, sizeof(Treasure), 1, f)) {
         showTreasure(&tr);
     }
-    fprintf(targetLoggingFilePtr, "Lista comorilor de la huntul %s:\n", hunt);
+    fprintf(targetLoggingFilePtr, "S a afisat lista comorilor de la huntul %s\n", hunt);
     if(fclose(f)) {
         perror("eroare la inchiderea fisierului treasures");
         return;
@@ -146,7 +147,7 @@ void view(char *hunt, int id) {
     sprintf(filepath, "%s/treasures", hunt);
     char targetLoggingFile[150];
     sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
-    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "at");
     if(!targetLoggingFilePtr) {
         perror("eroare la deschiderea fisierului de logare");
         return;
@@ -212,7 +213,7 @@ void remove_hunt(char *hunt) {
 void remove_treasure(char *hunt, int id) {
     char targetLoggingFile[150];
     sprintf(targetLoggingFile, "%s/logging-file.txt", hunt);
-    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "rt");
+    FILE *targetLoggingFilePtr = fopen(targetLoggingFile, "a1t");
     if(!targetLoggingFilePtr) {
         perror("eroare la deschiderea fisierului de logare");
         return;
