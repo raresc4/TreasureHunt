@@ -47,21 +47,19 @@ void handle_sigchld(int sig) {
 }
 
 void write_command(const char* cmd, const char* param1, const char* param2) {
-    FILE* cmd_file = fopen(COMMAND_FILE, "w");
-    if (!cmd_file) {
+    int fd = open(COMMAND_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
         perror("Error opening command file");
         return;
     }
-    
     if (param1 && param2) {
-        fprintf(cmd_file, "%s %s %s", cmd, param1, param2);
+        dprintf(fd, "%s %s %s", cmd, param1, param2);
     } else if (param1) {
-        fprintf(cmd_file, "%s %s", cmd, param1);
+        dprintf(fd, "%s %s", cmd, param1);
     } else {
-        fprintf(cmd_file, "%s", cmd);
+        dprintf(fd, "%s", cmd);
     }
-    
-    fclose(cmd_file);
+    close(fd);
 }
 
 int main() {
@@ -87,7 +85,7 @@ int main() {
             continue;
         }
         
-        if(strcmp(command, "start_monitor") == 0) {
+        if(!strcmp(command, "start_monitor")) {
             if(monitor_running) {
                 printf("Monitor already running.\n");
             } else {
@@ -103,20 +101,31 @@ int main() {
                     struct sigaction monitor_sa;
                     memset(&monitor_sa, 0, sizeof(monitor_sa));
                     void handle_sigusr1(int sig) {
-                        FILE* cmd_file = fopen(COMMAND_FILE, "r");
-                        if (!cmd_file) {
+                        int fd = open(COMMAND_FILE, O_RDONLY);
+                        if (fd < 0) {
                             perror("[Monitor] Error opening command file");
                             return;
                         }
-                        
+
                         char cmd[100];
                         char param1[50] = "";
                         char param2[50] = "";
                         
-                        fscanf(cmd_file, "%s %s %s", cmd, param1, param2);
-                        fclose(cmd_file);
-                        
-                        if (strcmp(cmd, "list_hunts") == 0) {
+                        read(fd, cmd, sizeof(cmd));
+                        char* token = strtok(cmd, " ");
+                        if (token) {
+                            strcpy(cmd, token);
+                            token = strtok(NULL, " ");
+                            if (token) {
+                                strcpy(param1, token);
+                                token = strtok(NULL, " ");
+                                if (token) {
+                                    strcpy(param2, token);
+                                }
+                            }
+                        }
+                        close(fd);
+                        if (!strcmp(cmd, "list_hunts")) {
                             printf("[Monitor] Listing all hunts and their treasure counts:\n");
                             
                             DIR* dir = opendir(".");
@@ -129,7 +138,7 @@ int main() {
                             int hunt_count = 0;
                             
                             while ((entry = readdir(dir)) != NULL) {
-                                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                                if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) {
                                     continue;
                                 }
                                 
@@ -152,16 +161,25 @@ int main() {
                                         int status;
                                         waitpid(pid, &status, 0);
                                         
-                                        FILE* treasure_file = fopen(treasure_path, "r");
-                                        if (treasure_file) {
-                                            fseek(treasure_file, 0, SEEK_END);
-                                            long file_size = ftell(treasure_file);
-                                            int treasure_count = file_size / sizeof(Treasure);
+                                        // FILE* treasure_file = fopen(treasure_path, "r");
+                                        // if (treasure_file) {
+                                        //     fseek(treasure_file, 0, SEEK_END);
+                                        //     long file_size = ftell(treasure_file);
+                                        //     int treasure_count = file_size / sizeof(Treasure);
                                             
+                                        //     printf("Hunt: %s, Treasures: %d\n", entry->d_name, treasure_count);
+                                        //     hunt_count++;
+                                            
+                                        //     fclose(treasure_file);
+                                        // }
+
+                                        int treasure_fd = open(treasure_path, O_RDONLY);
+                                        if (treasure_fd != -1) {
+                                            off_t file_size = lseek(treasure_fd, 0, SEEK_END);
+                                            int treasure_count = file_size / sizeof(Treasure);
                                             printf("Hunt: %s, Treasures: %d\n", entry->d_name, treasure_count);
                                             hunt_count++;
-                                            
-                                            fclose(treasure_file);
+                                            close(treasure_fd);
                                         }
                                     }
                                     
@@ -172,7 +190,7 @@ int main() {
                             closedir(dir);
                             printf("[Monitor] Total hunts found: %d\n", hunt_count);
                         } 
-                        else if (strcmp(cmd, "list_treasures") == 0) {
+                        else if (!strcmp(cmd, "list_treasures")) {
                             if (param1[0] != '\0') {
                                 printf("[Monitor] Listing treasures for hunt: %s\n", param1);
                                 
@@ -188,6 +206,24 @@ int main() {
                                 }
                             } else {
                                 printf("[Monitor] Error: Hunt name not provided\n");
+                            }
+                        }
+                        else if (!strcmp(cmd,"view_treasure")) {
+                            if(param1[0] != '\0' && param2[0] != '\0') {
+                                printf("[Monitor] Viewing treasure with ID %s in hunt %s\n", param2, param1);
+                                
+                                int pid = fork();
+                                if (pid == 0) {
+                                    execlp("./p", "p", "view", param1, param2, NULL);
+                                    
+                                    perror("[Monitor] Error executing p view command");
+                                    exit(EXIT_FAILURE);
+                                } else if (pid > 0) {
+                                    int status;
+                                    waitpid(pid, &status, 0);
+                                }
+                            } else {
+                                printf("[Monitor] Error: Hunt name or treasure ID not provided\n");
                             }
                         }
                     }
@@ -226,7 +262,7 @@ int main() {
                 }
             }
         }
-        else if(strcmp(command, "list_hunts") == 0) {
+        else if(!strcmp(command, "list_hunts")) {
             if(!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
@@ -239,7 +275,7 @@ int main() {
                 }
             }
         }
-        else if(strcmp(command, "list_treasures") == 0) {
+        else if(!strcmp(command, "list_treasures")) {
             if(!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
@@ -256,7 +292,28 @@ int main() {
                 }
             }
         }
-        else if(strcmp(command, "stop_monitor") == 0) {
+        else if(!strcmp(command, "view_treasure")) {
+            if(!monitor_running) {
+                printf("Error: Monitor not running.\n");
+            } else {
+                char hunt_name[50];
+                char treasure_id[10];
+                
+                printf("Enter hunt name: ");
+                scanf("%s", hunt_name);
+                printf("Enter treasure ID: ");
+                scanf("%s", treasure_id);
+                
+                write_command("view_treasure", hunt_name, treasure_id);
+                
+                if(kill(monitor_pid, SIGUSR1) == -1) {
+                    perror("Error sending signal to monitor");
+                } else {
+                    printf("[Hub] Requested view of treasure %s in hunt %s from monitor.\n", treasure_id, hunt_name);
+                }
+            }
+        }
+        else if(!strcmp(command, "stop_monitor")) {
             if(!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
@@ -268,7 +325,7 @@ int main() {
                 }
             }
         }
-        else if(strcmp(command, "exit") == 0) {
+        else if(!strcmp(command, "exit")) {
             if(monitor_running) {
                 printf("Error: Monitor still running. Stop the monitor first.\n");
             } else {
