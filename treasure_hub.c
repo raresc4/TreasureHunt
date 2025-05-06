@@ -160,24 +160,13 @@ int main() {
                                     } else if (pid > 0) {
                                         int status;
                                         waitpid(pid, &status, 0);
-                                        
-                                        // FILE* treasure_file = fopen(treasure_path, "r");
-                                        // if (treasure_file) {
-                                        //     fseek(treasure_file, 0, SEEK_END);
-                                        //     long file_size = ftell(treasure_file);
-                                        //     int treasure_count = file_size / sizeof(Treasure);
-                                            
-                                        //     printf("Hunt: %s, Treasures: %d\n", entry->d_name, treasure_count);
-                                        //     hunt_count++;
-                                            
-                                        //     fclose(treasure_file);
-                                        // }
 
                                         int treasure_fd = open(treasure_path, O_RDONLY);
                                         if (treasure_fd != -1) {
                                             off_t file_size = lseek(treasure_fd, 0, SEEK_END);
                                             int treasure_count = file_size / sizeof(Treasure);
                                             printf("Hunt: %s, Treasures: %d\n", entry->d_name, treasure_count);
+                                            fflush(stdout);
                                             hunt_count++;
                                             close(treasure_fd);
                                         }
