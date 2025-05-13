@@ -9,8 +9,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 
-#define COMMAND_FILE "monitor_command.txt"
-
 typedef struct {
     int x;
     int y;
@@ -28,7 +26,8 @@ int monitor_running = 0;
 int monitor_pid;
 volatile sig_atomic_t child_exited = 0;
 int monitor_status = 0;
-int monitor_stopping = 0; 
+int monitor_stopping = 0;
+int command_pipe[2]; 
 
 void handle_sigchld(int sig) {
     int pid;
@@ -39,7 +38,9 @@ void handle_sigchld(int sig) {
             child_exited = 1;
             monitor_status = status;
             monitor_running = 0;
-            monitor_stopping = 0;  
+            monitor_stopping = 0;
+            close(command_pipe[0]); 
+            close(command_pipe[1]);
             printf("[Hub] Monitor process ended with status %d\n", 
                    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
         }
@@ -47,19 +48,18 @@ void handle_sigchld(int sig) {
 }
 
 void write_command(const char* cmd, const char* param1, const char* param2) {
-    int fd = open(COMMAND_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        perror("Error opening command file");
-        return;
-    }
+    char buffer[256];
     if (param1 && param2) {
-        dprintf(fd, "%s %s %s", cmd, param1, param2);
+        sprintf(buffer, "%s %s %s", cmd, param1, param2);
     } else if (param1) {
-        dprintf(fd, "%s %s", cmd, param1);
+        sprintf(buffer,"%s %s", cmd, param1);
     } else {
-        dprintf(fd, "%s", cmd);
+        sprintf(buffer,"%s", cmd);
     }
-    close(fd);
+    
+    if (write(command_pipe[1], buffer, strlen(buffer) + 1) < 0) {
+        perror("Error writing to command pipe");
+    }
 }
 
 int main() {
@@ -74,22 +74,26 @@ int main() {
         exit(EXIT_FAILURE);
     }
     
-    while(1) {
+    if (pipe(command_pipe) == -1) {
+        perror("Error creating pipe");
+        exit(EXIT_FAILURE);
+    }
+    
+    while (1) {
         char command[100];
         printf("treasure_hub>> ");
         scanf("%s", command);
         command[strcspn(command, "\n")] = 0;
         
-        if(monitor_stopping) {
+        if (monitor_stopping) {
             printf("Error: Waiting for monitor to stop. Please wait...\n");
             continue;
         }
         
-        if(!strcmp(command, "start_monitor")) {
-            if(monitor_running) {
+        if (!strcmp(command, "start_monitor")) {
+            if (monitor_running) {
                 printf("Monitor already running.\n");
             } else {
-                unlink(COMMAND_FILE);
                 monitor_pid = fork();
                 
                 if (monitor_pid < 0) {
@@ -98,20 +102,23 @@ int main() {
                 }
                 
                 if (monitor_pid == 0) {
+                    close(command_pipe[1]); 
+                    
                     struct sigaction monitor_sa;
                     memset(&monitor_sa, 0, sizeof(monitor_sa));
+                    
                     void handle_sigusr1(int sig) {
-                        int fd = open(COMMAND_FILE, O_RDONLY);
-                        if (fd < 0) {
-                            perror("[Monitor] Error opening command file");
-                            return;
-                        }
-
                         char cmd[100];
                         char param1[50] = "";
                         char param2[50] = "";
                         
-                        read(fd, cmd, sizeof(cmd));
+                        ssize_t bytes_read = read(command_pipe[0], cmd, sizeof(cmd) - 1);
+                        if (bytes_read <= 0) {
+                            perror("[Monitor] Error reading from command pipe");
+                            return;
+                        }
+                        cmd[bytes_read] = '\0';
+                        
                         char* token = strtok(cmd, " ");
                         if (token) {
                             strcpy(cmd, token);
@@ -124,7 +131,7 @@ int main() {
                                 }
                             }
                         }
-                        close(fd);
+                        
                         if (!strcmp(cmd, "list_hunts")) {
                             printf("[Monitor] Listing all hunts and their treasure counts:\n");
                             
@@ -197,8 +204,8 @@ int main() {
                                 printf("[Monitor] Error: Hunt name not provided\n");
                             }
                         }
-                        else if (!strcmp(cmd,"view_treasure")) {
-                            if(param1[0] != '\0' && param2[0] != '\0') {
+                        else if (!strcmp(cmd, "view_treasure")) {
+                            if (param1[0] != '\0' && param2[0] != '\0') {
                                 printf("[Monitor] Viewing treasure with ID %s in hunt %s\n", param2, param1);
                                 
                                 int pid = fork();
@@ -216,56 +223,58 @@ int main() {
                             }
                         }
                     }
+                    
                     monitor_sa.sa_handler = handle_sigusr1;   
                     sigemptyset(&monitor_sa.sa_mask);
                     monitor_sa.sa_flags = 0;
-                    if(sigaction(SIGUSR1, &monitor_sa, NULL) == -1) {
+                    if (sigaction(SIGUSR1, &monitor_sa, NULL) == -1) {
                         perror("[Monitor] Error setting up SIGUSR1 handler");
                         exit(EXIT_FAILURE);
                     }
                     
                     void handle_sigterm(int sig) {
                         printf("[Monitor] Cleaning up...\n");
-                        usleep(2000000);  
+                        usleep(2000000);
                         printf("[Monitor] Terminating.\n");
+                        close(command_pipe[0]); 
                         exit(EXIT_SUCCESS);
                     }
                     
                     monitor_sa.sa_handler = handle_sigterm;
-                    if(sigaction(SIGTERM, &monitor_sa, NULL) == -1) {
+                    if (sigaction(SIGTERM, &monitor_sa, NULL) == -1) {
                         perror("[Monitor] Error setting up SIGTERM handler");
                         exit(EXIT_FAILURE);
                     }
                     
                     printf("[Monitor] Started with PID %d\n", getpid());
                     
-                    while(1) {
+                    while (1) {
                         pause();
                     }
                     
                     exit(EXIT_SUCCESS);
-                }
-                else {
+                } else {
+                    close(command_pipe[0]); 
                     monitor_running = 1;
                     printf("[Hub] Monitor started with PID %d\n", monitor_pid);
                 }
             }
         }
-        else if(!strcmp(command, "list_hunts")) {
-            if(!monitor_running) {
+        else if (!strcmp(command, "list_hunts")) {
+            if (!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
                 write_command("list_hunts", NULL, NULL);
                 
-                if(kill(monitor_pid, SIGUSR1) == -1) {
+                if (kill(monitor_pid, SIGUSR1) == -1) {
                     perror("Error sending signal to monitor");
                 } else {
                     printf("[Hub] Requested hunt listing from monitor.\n");
                 }
             }
         }
-        else if(!strcmp(command, "list_treasures")) {
-            if(!monitor_running) {
+        else if (!strcmp(command, "list_treasures")) {
+            if (!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
                 char hunt_name[50];
@@ -274,15 +283,15 @@ int main() {
                 
                 write_command("list_treasures", hunt_name, NULL);
                 
-                if(kill(monitor_pid, SIGUSR1) == -1) {
+                if (kill(monitor_pid, SIGUSR1) == -1) {
                     perror("Error sending signal to monitor");
                 } else {
                     printf("[Hub] Requested treasure listing for hunt %s from monitor.\n", hunt_name);
                 }
             }
         }
-        else if(!strcmp(command, "view_treasure")) {
-            if(!monitor_running) {
+        else if (!strcmp(command, "view_treasure")) {
+            if (!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
                 char hunt_name[50];
@@ -295,27 +304,27 @@ int main() {
                 
                 write_command("view_treasure", hunt_name, treasure_id);
                 
-                if(kill(monitor_pid, SIGUSR1) == -1) {
+                if (kill(monitor_pid, SIGUSR1) == -1) {
                     perror("Error sending signal to monitor");
                 } else {
                     printf("[Hub] Requested view of treasure %s in hunt %s from monitor.\n", treasure_id, hunt_name);
                 }
             }
         }
-        else if(!strcmp(command, "stop_monitor")) {
-            if(!monitor_running) {
+        else if (!strcmp(command, "stop_monitor")) {
+            if (!monitor_running) {
                 printf("Error: Monitor not running.\n");
             } else {
-                if(kill(monitor_pid, SIGTERM) == -1) {
+                if (kill(monitor_pid, SIGTERM) == -1) {
                     perror("Error sending termination signal to monitor");
                 } else {
                     printf("[Hub] Stop signal sent to monitor. Waiting for termination...\n");
-                    monitor_stopping = 1;  
+                    monitor_stopping = 1;
                 }
             }
         }
-        else if(!strcmp(command, "exit")) {
-            if(monitor_running) {
+        else if (!strcmp(command, "exit")) {
+            if (monitor_running) {
                 printf("Error: Monitor still running. Stop the monitor first.\n");
             } else {
                 printf("Exiting treasure_hub...\n");
